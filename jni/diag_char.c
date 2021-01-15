@@ -378,9 +378,6 @@ static int enable_logging(struct diag_char_handle_t *handle, int mode)
 		LOGW("DIAG_IOCTL_REMOTE_DEV ioctl failed (%s)\n", strerror(errno));
 		remote_dev = 0;
 	}
-	if (remote_dev != 0)
-		LOGW("DIAG_IOCTL_REMOTE_DEV ioctl provided non-zero remote_dev. "
-		     "The situation is not tested so things can be unreliable.\n");
 	handle->remote_dev = remote_dev;
 
 	// Register a DCI client
@@ -551,27 +548,35 @@ static ssize_t diag_char_read(diag_handle_t handle_, const void **buf, long *sta
 	while (handle->msg_id >= handle->msg_num ||
 	       handle->msg_type != USER_SPACE_DATA_TYPE) {
 		ssize_t ret = read(handle->fd, handle->buf, BUFFER_SIZE);
-		if (ret <= 8) {
+		if (ret <= 4) {
 			LOGE("Failed to read from /dev/diag (%s)\n",
 			     ret >= 0 ? "Read incompletely" : strerror(errno));
 			handle->msg_id = handle->msg_num = 0;
 			return ret >= 0 ? 0 : ret;
 		}
-		if (handle->msg_type == USER_SPACE_DATA_TYPE) {
-			handle->msg_id = 0;
-			handle->stamp = get_posix_timestamp();
-			handle->msg_start = handle->buf + (handle->remote_dev ? 12 : 8);
-		}
+		if (handle->msg_type != USER_SPACE_DATA_TYPE)
+			continue;
+		handle->msg_id = 0;
+		handle->stamp = get_posix_timestamp();
+		handle->msg_start = handle->buf + 8;
 	}
 
-	*buf = handle->msg_start + 4;
-	len = *handle->msg_size;
+	if ((int32_t) handle->msg_size[0] >= 0) {
+		*buf = handle->msg_start + 4;
+		len = handle->msg_size[0];
+		handle->msg_start += len + 4;
+	} else {
+		*buf = handle->msg_start + 8;
+		len = handle->msg_size[1];
+		handle->msg_start += len + 8;
+	}
 	++handle->msg_id;
-	handle->msg_start += len + 4;
+
 	if (stamp && handle->msg_id == handle->msg_num)
 		*stamp = handle->stamp;
 	else if (stamp)
 		*stamp = -1;
+
 	return len;
 }
 

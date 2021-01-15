@@ -46,8 +46,12 @@ static struct buffer_t read_file(const char *filename)
 	fseek(fp, 0L, SEEK_END);
 	sz = ftell(fp);
 	fseek(fp, 0L, SEEK_SET);
-	if (sz <= 0) {
+	if (sz < 0) {
 		LOGE("Failed to get the file size of %s (%s)\n", filename, strerror(errno));
+		goto fail;
+	}
+	if (sz == 0) {
+		LOGE("Empty file %s\n", filename);
 		goto fail;
 	}
 
@@ -69,7 +73,8 @@ static struct buffer_t read_file(const char *filename)
 fail:
 	ret.buf = NULL;
 	ret.len = 0;
-	fclose(fp);
+	if (fp != NULL)
+		fclose(fp);
 	return ret;
 }
 
