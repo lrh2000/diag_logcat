@@ -549,10 +549,10 @@ static ssize_t diag_char_read(diag_handle_t handle_, const void **buf, long *sta
 	       handle->msg_type != USER_SPACE_DATA_TYPE) {
 		ssize_t ret = read(handle->fd, handle->buf, BUFFER_SIZE);
 		if (ret <= 4) {
-			LOGE("Failed to read from /dev/diag (%s)\n",
+			LOGW("Failed to read from /dev/diag (%s)\n",
 			     ret >= 0 ? "Read incompletely" : strerror(errno));
 			handle->msg_id = handle->msg_num = 0;
-			return ret >= 0 ? 0 : ret;
+			continue;
 		}
 		if (handle->msg_type != USER_SPACE_DATA_TYPE)
 			continue;

@@ -103,35 +103,102 @@ static int write_commands(const struct buffer_t *cmd_buffer)
 	return 0;
 }
 
-static int retrieve_logs(FILE *data_log, FILE *stamp_log)
+static int retrieve_logs(const char *data_log_prefix,
+			 const char *stamp_log_prefix)
 {
+	static char data_log_name[FILENAME_MAX];
+	static char stamp_log_name[FILENAME_MAX];
+
+	size_t dlog_plen = strlen(data_log_prefix);
+	size_t tlog_plen = strlen(stamp_log_prefix);
+
+	if (dlog_plen > FILENAME_MAX - 11) {
+		LOGE("Invalid argument: data log prefix is too long\n");
+		return -4;
+	}
+	if (tlog_plen > FILENAME_MAX - 11) {
+		LOGE("Invalid argument: stamp log prefix is too long\n");
+		return -5;
+	}
+
+	strcpy(data_log_name, data_log_prefix);
+	strcpy(stamp_log_name, stamp_log_prefix);
+
+	strcpy(data_log_name + dlog_plen, ".0000.dlog");
+	strcpy(stamp_log_name + tlog_plen, ".0000.tlog");
+
 	const void *buf;
 	ssize_t len, wlen;
-	long stamp;
+	long stamp, last_stamp;
 	struct {
 		uint64_t offset;
 		uint64_t stamp;
 	} slog;
+	FILE *data_log, *stamp_log;
 
+	last_stamp = 0;
 	slog.offset = 0;
 	for (;;) {
+		if (!data_log)
+			data_log = fopen(data_log_name, "wb");
+		if (!data_log) {
+			LOGE("Failed to open data log at %s\n", data_log_name);
+			return -5;
+		}
+		if (!stamp_log)
+			stamp_log = fopen(stamp_log_name, "wb");
+		if (!stamp_log) {
+			LOGE("Failed to open stamp log at %s\n", stamp_log_name);
+			return -6;
+		}
+
 		len = (*diag_interface->read)(diag_handle, &buf, &stamp);
 		if (len <= 0)
 			return -1;
+
 		wlen = fwrite(buf, 1, len, data_log);
-		if (wlen != len)
+		if (wlen != len) {
+			LOGE("Failed to write to data log at %s\n", data_log_name);
 			return -2;
-		slog.offset += wlen;
-		if (stamp >= 0) {
-			slog.stamp = stamp;
-			wlen = fwrite(&slog, sizeof(slog), 1, stamp_log);
-			if (wlen != 1)
-				return -3;
 		}
+
+		slog.offset += wlen;
+		if (stamp < 0)
+			continue;
+		slog.stamp = stamp;
+
+		wlen = fwrite(&slog, sizeof(slog), 1, stamp_log);
+		if (wlen != 1) {
+			LOGE("Failed to write to stamp log at %s\n", stamp_log_name);
+			return -3;
+		}
+
+		if (stamp < last_stamp + 1000000000)
+			continue;
+		last_stamp = stamp;
+		fclose(data_log);
+		fclose(stamp_log);
+		data_log = NULL;
+		stamp_log = NULL;
+
+		if ((data_log_name[dlog_plen + 4]++, stamp_log_name[tlog_plen + 4]++) != '9')
+			continue;
+		data_log_name[dlog_plen + 4] = stamp_log_name[tlog_plen + 4] = '0';
+		if ((data_log_name[dlog_plen + 3]++, stamp_log_name[tlog_plen + 3]++) != '9')
+			continue;
+		data_log_name[dlog_plen + 3] = stamp_log_name[tlog_plen + 3] = '0';
+		if ((data_log_name[dlog_plen + 2]++, stamp_log_name[tlog_plen + 2]++) != '9')
+			continue;
+		data_log_name[dlog_plen + 2] = stamp_log_name[tlog_plen + 2] = '0';
+		if ((data_log_name[dlog_plen + 1]++, stamp_log_name[tlog_plen + 1]++) != '9')
+			continue;
+		data_log_name[dlog_plen + 1] = stamp_log_name[tlog_plen + 1] = '0';
+		LOGE("The number of the log files has overflowed\n");
+		return -7;
 	}
 }
 
-void on_sigint(int dummy)
+static void on_sigint(int dummy)
 {
 	exit(0);
 }
@@ -139,24 +206,12 @@ void on_sigint(int dummy)
 int main(int argc, char **argv)
 {
 	struct buffer_t cmd_buffer;
-	FILE *data_log, *stamp_log;
 	int i, ret;
 
 	signal(SIGINT, &on_sigint);
-	if (argc != 4)
+	if (argc != 4) {
+		printf("Usage: %s [DIAG CFG] [DLOG PREFIX] [TLOG PREFIX]\n", argv[0]);
 		return -8000;
-
-	data_log = fopen(argv[2], "wb");
-	if (!data_log) {
-		LOGE("Cannot open the file %s for writing data logs (%s)\n",
-		     argv[2], strerror(errno));
-		return -8001;
-	}
-	stamp_log = fopen(argv[3], "wb");
-	if (!stamp_log) {
-		LOGE("Cannot open the file %s for writing stamp logs (%s)\n",
-		     argv[3], strerror(errno));
-		return -8002;
 	}
 
 	// Read the config file
@@ -180,5 +235,5 @@ int main(int argc, char **argv)
 	if (ret != 0)
 		return -8005;
 
-	return retrieve_logs(data_log, stamp_log);
+	return retrieve_logs(argv[2], argv[3]);
 }
